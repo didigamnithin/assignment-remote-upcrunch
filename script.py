@@ -146,9 +146,15 @@ def parse_datetime_column(df: pd.DataFrame, col_name: str) -> pd.DataFrame:
         df = df.copy()
         # Try to parse with specific format first, then fallback to auto-detection
         try:
-            df[col_name] = pd.to_datetime(df[col_name], format='%m/%d/%y', errors="coerce")
+            # Try ISO format first (YYYY-MM-DD)
+            df[col_name] = pd.to_datetime(df[col_name], format='%Y-%m-%d', errors="coerce")
         except:
-            df[col_name] = pd.to_datetime(df[col_name], errors="coerce")
+            try:
+                # Try MM/DD/YY format
+                df[col_name] = pd.to_datetime(df[col_name], format='%m/%d/%y', errors="coerce")
+            except:
+                # Fallback to auto-detection
+                df[col_name] = pd.to_datetime(df[col_name], errors="coerce")
     return df
 
 
@@ -157,7 +163,7 @@ def add_week_start(df: pd.DataFrame, date_col: str, new_col: str = "Week") -> pd
         return df
     df = df.copy()
     series = pd.to_datetime(df[date_col], errors="coerce")
-    df[new_col] = series.dt.to_period("W-MON").apply(lambda r: r.start_time)
+    df[new_col] = series.dt.to_period("W-MON").apply(lambda r: r.start_time if pd.notna(r) else pd.NaT)
     return df
 
 
@@ -165,7 +171,11 @@ def filter_df_by_date(df: pd.DataFrame, date_col: str, start: Optional[pd.Timest
     if df.empty or date_col not in df.columns:
         return df
     mask = pd.Series(True, index=df.index)
-    dates = pd.to_datetime(df[date_col], errors="coerce")
+    # Use the already parsed datetime column if available, otherwise parse it
+    if df[date_col].dtype == 'datetime64[ns]':
+        dates = df[date_col]
+    else:
+        dates = pd.to_datetime(df[date_col], errors="coerce")
     if start is not None:
         mask &= dates >= start
     if end is not None:
@@ -188,12 +198,12 @@ def section_marketing(marketing_df: pd.DataFrame):
     if colored_header:
         colored_header(
             label="📢 Marketing Analytics",
-            description="Campaign performance, customer acquisition, and ROI analysis",
+            description="Store-level campaign performance, customer acquisition, and ROI analysis",
             color_name="green-70"
         )
     else:
         st.markdown("## 📢 Marketing Analytics")
-        st.markdown("*Campaign performance, customer acquisition, and ROI analysis*")
+        st.markdown("*Store-level campaign performance, customer acquisition, and ROI analysis*")
     
     if marketing_df.empty:
         st.info("📭 Marketing CSV not found or empty.")
@@ -201,205 +211,44 @@ def section_marketing(marketing_df: pd.DataFrame):
 
     # Parse and prepare
     marketing_df = parse_datetime_column(marketing_df, "Date")
-
-    # Marketing period comparison (fixed periods)
-    st.sidebar.markdown("**Marketing period comparison**")
-    default_pre_start = pd.Timestamp("2025-06-01")
-    default_pre_end = pd.Timestamp("2025-07-02")
-    default_post_start = pd.Timestamp("2025-07-03")
-    default_post_end = pd.Timestamp("2025-08-03")
-
-    st.sidebar.info(f"📅 **Pre Period:** {default_pre_start.strftime('%Y-%m-%d')} to {default_pre_end.strftime('%Y-%m-%d')}")
-    st.sidebar.info(f"📅 **Post Period:** {default_post_start.strftime('%Y-%m-%d')} to {default_post_end.strftime('%Y-%m-%d')}")
     
-    pre_range = (default_pre_start, default_pre_end)
-    post_range = (default_post_start, default_post_end)
-
-    # Metrics of interest
-    metrics = [
-        "Orders",
-        "Sales",
-        "Customer Discounts from Marketing | (Funded by you)",
-        "Marketing Fees | (Including any applicable taxes)",
-        "Average Order Value",
-        "ROAS",
-        "New Customers Acquired",
-        "Total Customers Acquired",
-    ]
-
-    # Build daily view (many notebook charts use `daily`)
-    daily = marketing_df.copy()
-    if "Date" in daily.columns:
-        daily = daily.sort_values("Date")
-        # If multiple rows per date, aggregate by sum/mean mix where appropriate
-        agg_map = {}
-        for m in metrics:
-            if m in daily.columns:
-                # numeric metrics -> sum; averages -> mean
-                if "Average" in m:
-                    agg_map[m] = "mean"
-                else:
-                    agg_map[m] = "sum"
-        if agg_map:
-            daily = (
-                daily.groupby("Date", as_index=False)
-                [list(agg_map.keys())]
-                .agg(agg_map)
-            )
-    else:
-        st.warning("Marketing data missing 'Date' column; some charts may be unavailable.")
-
-    # KPI cards
-    kpi_cols = st.columns(4)
-    with kpi_cols[0]:
-        total_orders = daily.get("Orders", pd.Series(dtype=float)).sum()
-        st.metric("Total Orders", f"{int(total_orders):,}")
-    with kpi_cols[1]:
-        total_sales = daily.get("Sales", pd.Series(dtype=float)).sum()
-        st.metric("Total Sales", f"${total_sales:,.0f}")
-    with kpi_cols[2]:
-        aov = daily.get("Average Order Value", pd.Series(dtype=float)).mean()
-        if pd.notnull(aov):
-            st.metric("Average Order Value", f"${aov:,.2f}")
-        else:
-            st.metric("Average Order Value", "—")
-    with kpi_cols[3]:
-        new_customers = daily.get("New Customers Acquired", pd.Series(dtype=float)).sum()
-        st.metric("New Customers", f"{int(new_customers):,}")
-
-    # Pre/Post comparison table
+    # Debug information for zero values issue
+    st.info(f"📊 Marketing Data Summary: {len(marketing_df)} rows loaded")
     if "Date" in marketing_df.columns:
-        pre_start, pre_end = pre_range if isinstance(pre_range, tuple) else (None, None)
-        post_start, post_end = post_range if isinstance(post_range, tuple) else (None, None)
-
-        pre_df = filter_df_by_date(marketing_df, "Date", pd.to_datetime(pre_start), pd.to_datetime(pre_end))
-        post_df = filter_df_by_date(marketing_df, "Date", pd.to_datetime(post_start), pd.to_datetime(post_end))
-
-        def agg_series(df: pd.DataFrame) -> pd.Series:
-            vals = {}
-            for m in metrics:
-                if m not in df.columns:
-                    continue
-                if "Average" in m:
-                    vals[m] = df[m].mean()
-                else:
-                    vals[m] = df[m].sum()
-            return pd.Series(vals)
-
-        pre_summary = agg_series(pre_df).rename("Pre")
-        post_summary = agg_series(post_df).rename("Post")
-        comparison = pd.concat([pre_summary, post_summary], axis=1)
-        comparison["Δ Absolute"] = comparison["Post"] - comparison["Pre"]
-        comparison["Δ % Change"] = safe_divide(comparison["Δ Absolute"], comparison["Pre"]) * 100
-
-        # Ensure numeric dtypes to avoid formatting bugs and then build a display copy
-        numeric_cols = ["Pre", "Post", "Δ Absolute", "Δ % Change"]
-        comparison_numeric = comparison.copy()
-        for c in numeric_cols:
-            comparison_numeric[c] = pd.to_numeric(comparison_numeric[c], errors="coerce")
-
-        def fmt_int(x):
-            return "—" if pd.isna(x) else f"{x:,.0f}"
-
-        def fmt_pct(x):
-            return "—" if pd.isna(x) else f"{x:.2f}%"
-
-        display_df = comparison_numeric.copy()
-        display_df["Pre"] = comparison_numeric["Pre"].map(fmt_int)
-        display_df["Post"] = comparison_numeric["Post"].map(fmt_int)
-        display_df["Δ Absolute"] = comparison_numeric["Δ Absolute"].map(fmt_int)
-        display_df["Δ % Change"] = comparison_numeric["Δ % Change"].map(fmt_pct)
-
-        st.markdown("**Pre vs Post comparison**")
-        st.dataframe(display_df, use_container_width=True)
-
-    # Time-series charts
-    if px is not None and "Date" in daily.columns:
-        ts_cols = [c for c in ["Orders", "Sales", "Average Order Value", "New Customers Acquired"] if c in daily.columns]
-        if ts_cols:
-            st.markdown("**Daily trends**")
-            for col in ts_cols:
-                fig = px.line(daily, x="Date", y=col, title=col)
-                st.plotly_chart(fig, use_container_width=True)
-
-        # Normalized multi-series
-        norm_metrics = [c for c in ["Orders", "Sales", "Average Order Value", "ROAS", "New Customers Acquired"] if c in daily.columns]
-        if len(norm_metrics) >= 2:
-            base = daily[["Date"] + norm_metrics].set_index("Date").astype(float)
-            normalized = pd.DataFrame(index=base.index)
-            for c in norm_metrics:
-                col_min = base[c].min()
-                col_range = base[c].max() - col_min
-                normalized[c] = safe_divide(base[c] - col_min, col_range)
-            norm_long = normalized.reset_index().melt(id_vars="Date", var_name="Metric", value_name="Normalized")
-            fig = px.line(norm_long, x="Date", y="Normalized", color="Metric", title="Daily Metrics (Min–Max Normalized)")
-            st.plotly_chart(fig, use_container_width=True)
-
-        # Correlation heatmap
-        corr_metrics = [c for c in ["Orders", "Sales", "Average Order Value", "ROAS", "New Customers Acquired"] if c in daily.columns]
-        if len(corr_metrics) >= 2 and go is not None:
-            corr = daily[corr_metrics].corr()
-            heat = go.Figure(data=go.Heatmap(z=corr.values, x=corr.columns, y=corr.index, colorscale="RdBu", zmin=-1, zmax=1))
-            heat.update_layout(title="Metric Correlation")
-            st.plotly_chart(heat, use_container_width=True)
-
-    # Seasonal decomposition (Orders)
-    if seasonal_decompose is not None and "Orders" in daily.columns and "Date" in daily.columns:
-        st.markdown("**Orders: weekly seasonal decomposition**")
-        ts = daily.set_index("Date")["Orders"].asfreq("D")
-        try:
-            decomp = seasonal_decompose(ts, model="additive", period=7)
-            st.line_chart(pd.DataFrame({
-                "Observed": decomp.observed,
-                "Trend": decomp.trend,
-                "Seasonal": decomp.seasonal,
-                "Resid": decomp.resid,
-            }))
-        except Exception:
-            st.warning("Unable to compute seasonal decomposition.")
-    else:
-        if seasonal_decompose is None:
-            st.info("Install statsmodels to see seasonal decomposition: pip install statsmodels")
-
-    # Prophet forecast (Orders)
-    if Prophet is not None and "Orders" in daily.columns and "Date" in daily.columns:
-        st.markdown("**Orders forecast (Prophet)**")
-        try:
-            df_prophet = daily.rename(columns={"Date": "ds", "Orders": "y"})[["ds", "y"]]
-            m = Prophet(daily_seasonality=True)
-            m.fit(df_prophet)
-            future = m.make_future_dataframe(periods=30)
-            fc = m.predict(future)
-            # Lightweight display using Plotly if available
-            if px is not None:
-                fig = px.line(fc, x="ds", y="yhat", title="30-day Forecast of Orders")
-                fig.add_scatter(x=df_prophet["ds"], y=df_prophet["y"], name="Actual", mode="lines")
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.line_chart(fc.set_index("ds")["yhat"])  # fallback
-        except Exception:
-            st.warning("Prophet forecast failed to compute.")
-    else:
-        if Prophet is None:
-            st.info("Install prophet to enable forecasting: pip install prophet")
+        date_range = f"Date range: {marketing_df['Date'].min()} to {marketing_df['Date'].max()}"
+        st.info(date_range)
+        st.info("📅 Note: Data filtered to end on August 10, 2025 as requested")
+    
+    # Check for zero values in key metrics
+    key_metrics = ["Orders", "Sales", "Marketing Fees | (Including any applicable taxes)", "ROAS"]
+    zero_counts = {}
+    for metric in key_metrics:
+        if metric in marketing_df.columns:
+            zero_count = (marketing_df[metric] == 0).sum()
+            total_count = len(marketing_df)
+            zero_counts[metric] = f"{zero_count}/{total_count} ({zero_count/total_count*100:.1f}%)"
+    
+    if zero_counts:
+        st.info("🔍 Zero Values Analysis:")
+        for metric, count in zero_counts.items():
+            st.info(f"  {metric}: {count} zero values")
 
     # Store-Level Analysis Section
-    st.markdown("---")
     st.markdown("## 🏪 Store-Level Marketing Analysis")
     
     # Get unique stores from marketing data
     if "Store Name" in marketing_df.columns:
-        stores = ["All Stores"] + sorted(marketing_df["Store Name"].dropna().unique().tolist())
+        stores = sorted(marketing_df["Store Name"].dropna().unique().tolist())
         
         # Store selection interface
-        st.markdown("**Select Store for Detailed Analysis:**")
+        st.markdown("**Select Store for Analysis:**")
         
         # Create store selection buttons in a grid
         store_cols = st.columns(4)
         
         # Initialize session state for store selection
         if "marketing_selected_store" not in st.session_state:
-            st.session_state.marketing_selected_store = "All Stores"
+            st.session_state.marketing_selected_store = stores[0] if stores else None
         
         for i, store in enumerate(stores):
             col_idx = i % 4
@@ -407,13 +256,8 @@ def section_marketing(marketing_df: pd.DataFrame):
                 if st.button(store, key=f"marketing_store_{i}", use_container_width=True):
                     st.session_state.marketing_selected_store = store
         
-        # Back to all stores button
-        if st.session_state.marketing_selected_store != "All Stores":
-            if st.button("← Back to All Stores", key="marketing_back_to_all", use_container_width=True):
-                st.session_state.marketing_selected_store = "All Stores"
-        
         # Store-specific analysis
-        if st.session_state.marketing_selected_store != "All Stores":
+        if st.session_state.marketing_selected_store:
             st.markdown(f"## 📊 {st.session_state.marketing_selected_store} - Marketing Performance Analysis")
             
             # Filter data for selected store
@@ -586,31 +430,6 @@ def section_marketing(marketing_df: pd.DataFrame):
                                          color="Sales", color_continuous_scale="plasma")
                     st.plotly_chart(fig_sales_top, use_container_width=True)
         
-        else:
-            # All stores overview
-            st.markdown("### 📊 All Stores Overview")
-            
-            if "Store Name" in marketing_df.columns:
-                # Store summary table
-                store_summary = marketing_df.groupby("Store Name").agg({
-                    "Orders": "sum",
-                    "Sales": "sum",
-                    "Average Order Value": "mean",
-                    "ROAS": "mean",
-                    "New Customers Acquired": "sum",
-                    "Total Customers Acquired": "sum"
-                }).reset_index()
-                
-                st.dataframe(store_summary, use_container_width=True)
-                
-                # Store performance heatmap
-                if px is not None:
-                    store_metrics = store_summary.set_index("Store Name")[["Orders", "Sales", "Average Order Value", "ROAS"]]
-                    fig_heatmap = px.imshow(store_metrics.T, 
-                                          title="Store Performance Heatmap",
-                                          color_continuous_scale="viridis",
-                                          aspect="auto")
-                    st.plotly_chart(fig_heatmap, use_container_width=True)
     else:
         st.info("Store Name column not found in marketing data. Store-level analysis unavailable.")
 
@@ -624,12 +443,12 @@ def section_operations(ops_df: pd.DataFrame):
     if colored_header:
         colored_header(
             label="⚙️ Operations Analytics",
-            description="Store performance, ratings, and operational efficiency metrics",
+            description="Store-level performance, ratings, and operational efficiency metrics",
             color_name="blue-70"
         )
     else:
         st.markdown("## ⚙️ Operations Analytics")
-        st.markdown("*Store performance, ratings, and operational efficiency metrics*")
+        st.markdown("*Store-level performance, ratings, and operational efficiency metrics*")
     
     if ops_df.empty:
         st.info("📭 Operations CSV not found or empty.")
@@ -667,60 +486,29 @@ def section_operations(ops_df: pd.DataFrame):
             ops_df["Total Downtime in Minutes"], ops_df["Total Orders Including Cancelled Orders"]
         )
 
-    # KPI cards
-    kpi_cols = st.columns(4)
-    with kpi_cols[0]:
-        delivered = ops_df.get("Total Delivered or Picked Up Orders", pd.Series(dtype=float)).sum()
-        st.metric("Delivered Orders", f"{int(delivered):,}")
-    with kpi_cols[1]:
-        cancel_rate = ops_df.get("Cancellation Rate", pd.Series(dtype=float)).mean()
-        if pd.notnull(cancel_rate):
-            st.metric("Avg Cancellation Rate", f"{cancel_rate*100:.2f}%")
-        else:
-            st.metric("Avg Cancellation Rate", "—")
-    with kpi_cols[2]:
-        downtime = ops_df.get("Downtime per Order (min)", pd.Series(dtype=float)).mean()
-        if pd.notnull(downtime):
-            st.metric("Avg Downtime / Order", f"{downtime:.2f} min")
-        else:
-            st.metric("Avg Downtime / Order", "—")
-    with kpi_cols[3]:
-        avg_rating = ops_df.get("Average Rating", pd.Series(dtype=float)).mean()
-        if pd.notnull(avg_rating):
-            st.metric("Average Rating", f"{avg_rating:.2f}")
-        else:
-            st.metric("Average Rating", "—")
-
-    # Store summary (sum & mean)
-    if {"Store ID", "Store Name"}.issubset(ops_df.columns):
-        numeric_cols = [c for c in kpis if c in ops_df.columns]
-        if numeric_cols:
-            store_summary = (
-                ops_df.groupby(["Store ID", "Store Name"])[numeric_cols]
-                .agg(["sum", "mean"])
-            )
-            # Flatten columns
-            store_summary.columns = ["_".join(col).strip() for col in store_summary.columns]
-            st.markdown("**Store summary (sum/mean)**")
-            st.dataframe(store_summary.reset_index())
+    # Show data summary
+    st.info(f"📊 Operations Data Summary: {len(ops_df)} rows loaded")
+    if "Start Date" in ops_df.columns:
+        date_range = f"Date range: {ops_df['Start Date'].min()} to {ops_df['Start Date'].max()}"
+        st.info(date_range)
+        st.info("📅 Note: Data filtered to end on August 10, 2025 as requested")
 
     # Store-Level Analysis Section
-    st.markdown("---")
     st.markdown("## 🏪 Store-Level Operations Analysis")
     
     # Get unique stores from operations data
     if "Store Name" in ops_df.columns:
-        stores = ["All Stores"] + sorted(ops_df["Store Name"].dropna().unique().tolist())
+        stores = sorted(ops_df["Store Name"].dropna().unique().tolist())
         
         # Store selection interface
-        st.markdown("**Select Store for Detailed Analysis:**")
+        st.markdown("**Select Store for Analysis:**")
         
         # Create store selection buttons in a grid
         store_cols = st.columns(4)
         
         # Initialize session state for store selection
         if "ops_selected_store" not in st.session_state:
-            st.session_state.ops_selected_store = "All Stores"
+            st.session_state.ops_selected_store = stores[0] if stores else None
         
         for i, store in enumerate(stores):
             col_idx = i % 4
@@ -728,13 +516,8 @@ def section_operations(ops_df: pd.DataFrame):
                 if st.button(store, key=f"ops_store_{i}", use_container_width=True):
                     st.session_state.ops_selected_store = store
         
-        # Back to all stores button
-        if st.session_state.ops_selected_store != "All Stores":
-            if st.button("← Back to All Stores", key="ops_back_to_all", use_container_width=True):
-                st.session_state.ops_selected_store = "All Stores"
-        
         # Store-specific analysis
-        if st.session_state.ops_selected_store != "All Stores":
+        if st.session_state.ops_selected_store:
             st.markdown(f"## 📊 {st.session_state.ops_selected_store} - Operations Performance Analysis")
             
             # Filter data for selected store
@@ -904,12 +687,12 @@ def section_sales(sales_df: pd.DataFrame):
     if colored_header:
         colored_header(
             label="💰 Sales Analytics",
-            description="Revenue analysis, order trends, and financial performance",
+            description="Store-level revenue analysis, order trends, and financial performance",
             color_name="orange-70"
         )
     else:
         st.markdown("## 💰 Sales Analytics")
-        st.markdown("*Revenue analysis, order trends, and financial performance*")
+        st.markdown("*Store-level revenue analysis, order trends, and financial performance*")
     
     if sales_df.empty:
         st.info("📭 Sales CSV not found or empty.")
@@ -951,100 +734,29 @@ def section_sales(sales_df: pd.DataFrame):
             ),
         )
 
-    # KPIs
-    kpi_cols = st.columns(4)
-    with kpi_cols[0]:
-        gross = sales_df.get("Gross Sales", pd.Series(dtype=float)).sum()
-        st.metric("Gross Sales", f"${gross:,.0f}")
-    with kpi_cols[1]:
-        delivered = sales_df.get("Total Delivered or Picked Up Orders", pd.Series(dtype=float)).sum()
-        st.metric("Delivered Orders", f"{int(delivered):,}")
-    with kpi_cols[2]:
-        aov = sales_df.get("AOV", pd.Series(dtype=float)).mean()
-        st.metric("AOV", f"${aov:,.2f}" if pd.notnull(aov) else "—")
-    with kpi_cols[3]:
-        fulfill_rate = sales_df.get("Fulfillment_Rate", pd.Series(dtype=float)).mean()
-        st.metric("Avg Fulfillment Rate", f"{fulfill_rate*100:.2f}%" if pd.notnull(fulfill_rate) else "—")
-
-    # Weekly aggregation
-    if {"Store Name", "Week"}.issubset(sales_df.columns):
-        weekly = sales_df.groupby(["Store Name", "Week"]).agg(
-            {
-                k: "sum"
-                for k in [
-                    "Gross Sales",
-                    "Total Orders Including Cancelled Orders",
-                    "Total Delivered or Picked Up Orders",
-                ]
-                if k in sales_df.columns
-            }
-        )
-        if "AOV" in sales_df.columns:
-            weekly["AOV"] = (
-                sales_df.groupby(["Store Name", "Week"])  
-                ["AOV"].mean()
-            )
-        for k in [
-            "Cancellation_Rate",
-            "Fulfillment_Rate",
-            "Commission_Rate",
-            "Promo_ROI",
-            "Ad_ROI",
-            "Revenue_per_Delivered",
-        ]:
-            if k in sales_df.columns:
-                weekly[k] = sales_df.groupby(["Store Name", "Week"])[k].mean()
-        weekly = weekly.reset_index()
-
-        if px is not None and "Gross Sales" in weekly.columns:
-            st.markdown("**Weekly Gross Sales per Store**")
-            fig = px.line(weekly, x="Week", y="Gross Sales", color="Store Name")
-            st.plotly_chart(fig, use_container_width=True)
-
-        # Top 5 stores by total Gross Sales
-        if px is not None and "Gross Sales" in weekly.columns:
-            totals = weekly.groupby("Store Name")["Gross Sales"].sum().nlargest(5)
-            top5 = totals.index.tolist()
-            st.markdown("**Top 5 Stores: Weekly Gross Sales**")
-            fig = px.line(weekly[weekly["Store Name"].isin(top5)], x="Week", y="Gross Sales", color="Store Name")
-            st.plotly_chart(fig, use_container_width=True)
-
-        # Scatter: Promo Fees vs Promo Sales
-        fees_col = "Total Promotion Fees | (for historical reference only)"
-        sales_col = "Total Promotion Sales | (for historical reference only)"
-        if px is not None and fees_col in sales_df.columns and sales_col in sales_df.columns:
-            st.markdown("**Promo Spend vs Promo Sales**")
-            try:
-                fig = px.scatter(sales_df, x=fees_col, y=sales_col, trendline="ols")
-            except Exception:
-                fig = px.scatter(sales_df, x=fees_col, y=sales_col)
-            st.plotly_chart(fig, use_container_width=True)
-
-        # Bar: Avg Fulfillment Rate by Store
-        if px is not None and "Fulfillment_Rate" in weekly.columns:
-            st.markdown("**Store Fulfillment Rate Ranking**")
-            fulfill_avg = weekly.groupby("Store Name")["Fulfillment_Rate"].mean().sort_values(ascending=False)
-            fig = px.bar(fulfill_avg, orientation="v", labels={"value": "Avg Fulfillment Rate", "index": "Store Name"})
-            fig.update_yaxes(tickformat=".0%")
-            st.plotly_chart(fig, use_container_width=True)
+    # Show data summary
+    st.info(f"📊 Sales Data Summary: {len(sales_df)} rows loaded")
+    if "Start Date" in sales_df.columns:
+        date_range = f"Date range: {sales_df['Start Date'].min()} to {sales_df['Start Date'].max()}"
+        st.info(date_range)
+        st.info("📅 Note: Data filtered to end on August 10, 2025 as requested")
 
     # Store-Level Analysis Section
-    st.markdown("---")
     st.markdown("## 🏪 Store-Level Sales Analysis")
     
     # Get unique stores from sales data
     if "Store Name" in sales_df.columns:
-        stores = ["All Stores"] + sorted(sales_df["Store Name"].dropna().unique().tolist())
+        stores = sorted(sales_df["Store Name"].dropna().unique().tolist())
         
         # Store selection interface
-        st.markdown("**Select Store for Detailed Analysis:**")
+        st.markdown("**Select Store for Analysis:**")
         
         # Create store selection buttons in a grid
         store_cols = st.columns(4)
         
         # Initialize session state for store selection
         if "sales_selected_store" not in st.session_state:
-            st.session_state.sales_selected_store = "All Stores"
+            st.session_state.sales_selected_store = stores[0] if stores else None
         
         for i, store in enumerate(stores):
             col_idx = i % 4
@@ -1052,13 +764,8 @@ def section_sales(sales_df: pd.DataFrame):
                 if st.button(store, key=f"sales_store_{i}", use_container_width=True):
                     st.session_state.sales_selected_store = store
         
-        # Back to all stores button
-        if st.session_state.sales_selected_store != "All Stores":
-            if st.button("← Back to All Stores", key="sales_back_to_all", use_container_width=True):
-                st.session_state.sales_selected_store = "All Stores"
-        
         # Store-specific analysis
-        if st.session_state.sales_selected_store != "All Stores":
+        if st.session_state.sales_selected_store:
             st.markdown(f"## 📊 {st.session_state.sales_selected_store} - Sales Performance Analysis")
             
             # Filter data for selected store
@@ -1255,64 +962,54 @@ def section_payouts(payout_df: pd.DataFrame):
     if colored_header:
         colored_header(
             label="💸 Payouts Analytics",
-            description="Payment analysis, commission tracking, and financial settlements",
+            description="Store-level payment analysis, commission tracking, and financial settlements",
             color_name="red-70"
         )
     else:
         st.markdown("## 💸 Payouts Analytics")
-        st.markdown("*Payment analysis, commission tracking, and financial settlements*")
+        st.markdown("*Store-level payment analysis, commission tracking, and financial settlements*")
     
     if payout_df.empty:
         st.info("📭 Payouts CSV not found or empty.")
         return
 
     payout_df = parse_datetime_column(payout_df, "Payout Date")
+    
+    # Show filtering information
+    st.info(f"📊 Payouts Data Summary: {len(payout_df)} rows loaded")
+    if "Payout Date" in payout_df.columns:
+        date_range = f"Date range: {payout_df['Payout Date'].min()} to {payout_df['Payout Date'].max()}"
+        st.info(date_range)
+        st.info("📅 Note: July 29, 2025 filtered out and data ends on August 10, 2025 as requested")
 
-    # KPI cards
-    kpi_cols = st.columns(4)
-    net_payout_col = find_column_by_keywords(payout_df, ["net payout"]) or "Net Payout"
-    subtotal_col = find_column_by_keywords(payout_df, ["subtotal"]) or "Subtotal"
-    commission_col = find_column_by_keywords(payout_df, ["commission"]) or "Commission"
-    mk_fee_col = find_column_by_keywords(payout_df, ["marketing fees"]) or "Marketing Fees | (Including any applicable taxes)"
-
-    with kpi_cols[0]:
-        net_payout = payout_df.get(net_payout_col, pd.Series(dtype=float)).sum()
-        st.metric("Net Payout", f"${net_payout:,.0f}")
-    with kpi_cols[1]:
-        subtotal = payout_df.get(subtotal_col, pd.Series(dtype=float)).sum()
-        st.metric("Subtotal", f"${subtotal:,.0f}")
-    with kpi_cols[2]:
-        commission = payout_df.get(commission_col, pd.Series(dtype=float)).sum()
-        st.metric("Commission", f"${commission:,.0f}")
-    with kpi_cols[3]:
-        mk_fees = payout_df.get(mk_fee_col, pd.Series(dtype=float)).sum()
-        st.metric("Marketing Fees", f"${mk_fees:,.0f}")
-
+    # Store-Level Analysis Section
+    st.markdown("## 🏪 Store-Level Payouts Analysis")
+    
     # Group by Store and Date
     if {"Store Name", "Payout Date"}.issubset(payout_df.columns):
         metrics = [
             c for c in [
-                net_payout_col,
-                subtotal_col,
-                commission_col,
+                "Net Payout",
+                "Subtotal",
+                "Commission",
                 "Drive Charge",
-                mk_fee_col,
+                "Marketing Fees | (Including any applicable taxes)",
                 "Customer Discounts from Marketing | (Funded by You)",
             ] if c in payout_df.columns
         ]
         grouped = payout_df.groupby(["Store Name", "Payout Date"])[metrics].sum().reset_index()
 
-        stores = ["All Stores"] + sorted(grouped["Store Name"].unique().tolist())
+        stores = sorted(grouped["Store Name"].unique().tolist())
         
         # Create store selection with buttons
-        st.markdown("**Select Store for Detailed Analysis:**")
+        st.markdown("**Select Store for Analysis:**")
         
         # Create a grid of buttons for store selection
         cols = st.columns(3)  # 3 columns for better layout
         
         # Initialize session state for store selection
         if "payouts_selected_store" not in st.session_state:
-            st.session_state.payouts_selected_store = "All Stores"
+            st.session_state.payouts_selected_store = stores[0] if stores else None
         
         for i, store in enumerate(stores):
             col_idx = i % 3
@@ -1321,12 +1018,8 @@ def section_payouts(payout_df: pd.DataFrame):
                     st.session_state.payouts_selected_store = store
         
         # Apply the selection
-        if st.session_state.payouts_selected_store != "All Stores":
+        if st.session_state.payouts_selected_store:
             data = grouped[grouped["Store Name"] == st.session_state.payouts_selected_store].sort_values("Payout Date")
-            
-            # Back to all stores button
-            if st.button("← Back to All Stores", key="back_to_all", use_container_width=True):
-                st.session_state.payouts_selected_store = "All Stores"
             
             # Store-level detailed analysis
             st.markdown(f"## 📊 {st.session_state.payouts_selected_store} - Detailed Payout Analysis")
@@ -1439,19 +1132,26 @@ def section_payouts(payout_df: pd.DataFrame):
 # -------------------------------
 
 def section_ubereats(ubereats_df: pd.DataFrame):
+    # Debug information as requested by user
+    st.info("🔍 DEBUG: UberEats Section - Starting Analysis")
+    st.info(f"🔍 DEBUG: DataFrame received - Shape: {ubereats_df.shape}")
+    st.info(f"🔍 DEBUG: DataFrame columns: {list(ubereats_df.columns)}")
+    st.info(f"🔍 DEBUG: DataFrame info - {ubereats_df.info() if not ubereats_df.empty else 'Empty DataFrame'}")
+    
     # Colourful section header
     if colored_header:
         colored_header(
             label="🚗 UberEats Analytics",
-            description="Sales and payout analysis for UberEats operations",
+            description="Store-level sales and payout analysis for UberEats operations",
             color_name="blue-70"
         )
     else:
         st.markdown("## 🚗 UberEats Analytics")
-        st.markdown("*Sales and payout analysis for UberEats operations*")
+        st.markdown("*Store-level sales and payout analysis for UberEats operations*")
     
     if ubereats_df.empty:
         st.info("📭 UberEats CSV not found or empty.")
+        st.info("🔍 DEBUG: DataFrame is empty - this is why analysis cannot proceed")
         return
 
     # Parse and prepare data
@@ -1471,61 +1171,29 @@ def section_ubereats(ubereats_df: pd.DataFrame):
             ubereats_df["Sales (incl. tax)"]
         )
 
-    # KPI cards
-    kpi_cols = st.columns(4)
-    with kpi_cols[0]:
-        total_orders = ubereats_df.get("Order Count", pd.Series(dtype=float)).sum()
-        st.metric("Total Orders", f"{int(total_orders):,}")
-    with kpi_cols[1]:
-        total_sales = ubereats_df.get("Sales (incl. tax)", pd.Series(dtype=float)).sum()
-        st.metric("Total Sales", f"${total_sales:,.0f}")
-    with kpi_cols[2]:
-        total_payout = ubereats_df.get("Total payout ", pd.Series(dtype=float)).sum()
-        st.metric("Total Payout", f"${total_payout:,.0f}")
-    with kpi_cols[3]:
-        avg_aov = ubereats_df.get("Average Order Value", pd.Series(dtype=float)).mean()
-        if pd.notnull(avg_aov):
-            st.metric("Average Order Value", f"${avg_aov:,.2f}")
-        else:
-            st.metric("Average Order Value", "—")
-
-    # Financial Performance Metrics
-    st.markdown("### 💰 Financial Performance")
-    financial_cols = st.columns(4)
-    
-    with financial_cols[0]:
-        marketplace_fees = ubereats_df.get("Marketplace Fee", pd.Series(dtype=float)).sum()
-        st.metric("Marketplace Fees", f"${marketplace_fees:,.0f}")
-    
-    with financial_cols[1]:
-        delivery_fees = ubereats_df.get("Delivery Network Fee", pd.Series(dtype=float)).sum()
-        st.metric("Delivery Fees", f"${delivery_fees:,.0f}")
-    
-    with financial_cols[2]:
-        processing_fees = ubereats_df.get("Order Processing Fee", pd.Series(dtype=float)).sum()
-        st.metric("Processing Fees", f"${processing_fees:,.0f}")
-    
-    with financial_cols[3]:
-        total_fees = marketplace_fees + delivery_fees + processing_fees
-        st.metric("Total Fees", f"${total_fees:,.0f}")
+    # Show data summary
+    st.info(f"📊 UberEats Data Summary: {len(ubereats_df)} rows loaded")
+    if "Payout Date" in ubereats_df.columns:
+        date_range = f"Date range: {ubereats_df['Payout Date'].min()} to {ubereats_df['Payout Date'].max()}"
+        st.info(date_range)
+        st.info("📅 Note: Data filtered to end on August 10, 2025 as requested")
 
     # Store-Level Analysis Section
-    st.markdown("---")
     st.markdown("## 🏪 Store-Level UberEats Analysis")
     
     # Get unique stores from UberEats data
     if "Store Name" in ubereats_df.columns:
-        stores = ["All Stores"] + sorted(ubereats_df["Store Name"].dropna().unique().tolist())
+        stores = sorted(ubereats_df["Store Name"].dropna().unique().tolist())
         
         # Store selection interface
-        st.markdown("**Select Store for Detailed Analysis:**")
+        st.markdown("**Select Store for Analysis:**")
         
         # Create store selection buttons in a grid
         store_cols = st.columns(4)
         
         # Initialize session state for store selection
         if "ubereats_selected_store" not in st.session_state:
-            st.session_state.ubereats_selected_store = "All Stores"
+            st.session_state.ubereats_selected_store = stores[0] if stores else None
         
         for i, store in enumerate(stores):
             col_idx = i % 4
@@ -1533,13 +1201,8 @@ def section_ubereats(ubereats_df: pd.DataFrame):
                 if st.button(store, key=f"ubereats_store_{i}", use_container_width=True):
                     st.session_state.ubereats_selected_store = store
         
-        # Back to all stores button
-        if st.session_state.ubereats_selected_store != "All Stores":
-            if st.button("← Back to All Stores", key="ubereats_back_to_all", use_container_width=True):
-                st.session_state.ubereats_selected_store = "All Stores"
-        
         # Store-specific analysis
-        if st.session_state.ubereats_selected_store != "All Stores":
+        if st.session_state.ubereats_selected_store:
             st.markdown(f"## 📊 {st.session_state.ubereats_selected_store} - UberEats Performance Analysis")
             
             # Filter data for selected store
@@ -1660,84 +1323,8 @@ def section_ubereats(ubereats_df: pd.DataFrame):
                                          color="Sales (incl. tax)", color_continuous_scale="plasma")
                     st.plotly_chart(fig_sales_top, use_container_width=True)
         
-        else:
-            # All stores overview
-            st.markdown("### 📊 All Stores Overview")
-            
-            if "Store Name" in ubereats_df.columns:
-                # Store summary table
-                store_summary = ubereats_df.groupby("Store Name").agg({
-                    "Order Count": "sum",
-                    "Sales (incl. tax)": "sum",
-                    "Total payout ": "sum",
-                    "Average Order Value": "mean"
-                }).reset_index()
-                
-                st.dataframe(store_summary, use_container_width=True)
-                
-                # Store performance heatmap
-                if px is not None:
-                    store_metrics = store_summary.set_index("Store Name")[["Order Count", "Sales (incl. tax)", 
-                                                                        "Total payout ", "Average Order Value"]]
-                    fig_heatmap = px.imshow(store_metrics.T, 
-                                          title="Store UberEats Performance Heatmap",
-                                          color_continuous_scale="viridis",
-                                          aspect="auto")
-                    st.plotly_chart(fig_heatmap, use_container_width=True)
     else:
         st.info("Store Name column not found in UberEats data. Store-level analysis unavailable.")
-
-    # Time series analysis for all data
-    if px is not None and "Payout Date" in ubereats_df.columns:
-        st.markdown("### 📈 Overall Performance Trends")
-        
-        # Aggregate by date
-        daily_data = ubereats_df.groupby("Payout Date").agg({
-            "Order Count": "sum",
-            "Sales (incl. tax)": "sum",
-            "Total payout ": "sum"
-        }).reset_index()
-        
-        # Orders over time
-        fig_orders = px.line(daily_data, x="Payout Date", y="Order Count", 
-                           title="Total Orders Over Time", markers=True)
-        st.plotly_chart(fig_orders, use_container_width=True)
-        
-        # Sales over time
-        fig_sales = px.line(daily_data, x="Payout Date", y="Sales (incl. tax)", 
-                          title="Total Sales Over Time", markers=True)
-        st.plotly_chart(fig_sales, use_container_width=True)
-        
-        # Payouts over time
-        fig_payouts = px.line(daily_data, x="Payout Date", y="Total payout ", 
-                            title="Total Payouts Over Time", markers=True)
-        st.plotly_chart(fig_payouts, use_container_width=True)
-
-    # Fee analysis
-    st.markdown("### 💸 Fee Analysis")
-    
-    if px is not None:
-        # Fee breakdown
-        fee_cols = ["Marketplace Fee", "Delivery Network Fee", "Order Processing Fee"]
-        available_fees = [col for col in fee_cols if col in ubereats_df.columns]
-        
-        if available_fees:
-            fee_data = ubereats_df[available_fees].sum()
-            fig_fees = px.pie(values=fee_data.values, names=fee_data.index, 
-                            title="Fee Distribution")
-            st.plotly_chart(fig_fees, use_container_width=True)
-            
-            # Fee trends over time
-            fee_trends = ubereats_df.groupby("Payout Date")[available_fees].sum().reset_index()
-            fig_fee_trends = px.line(fee_trends, x="Payout Date", y=available_fees, 
-                                   title="Fee Trends Over Time")
-            st.plotly_chart(fig_fee_trends, use_container_width=True)
-
-    # Summary statistics
-    st.markdown("### 📊 Summary Statistics")
-    
-    summary_stats = ubereats_df.describe()
-    st.dataframe(summary_stats, use_container_width=True)
 
 
 # -------------------------------
@@ -2452,7 +2039,7 @@ def section_overview(marketing_df: pd.DataFrame, ops_df: pd.DataFrame, sales_df:
     # Detailed column analysis by file
     st.markdown("### Important Columns by File")
     
-    for name, df in [("Marketing", marketing_df), ("Operations", ops_df), ("Sales", sales_df), ("Payouts", payout_df), ("UberEats", ubereats_df)]:
+    for name, df in [("Marketing", marketing_df), ("Operations", ops_df), ("Sales", sales_df), ("Payouts", payout_df), ("ubereats", ubereats_df)]:
         if not df.empty:
             st.markdown(f"**{name} File:**")
             
@@ -2661,6 +2248,52 @@ def main():
         pay = load_csv(CSV_FILES["payouts"])  # payouts
         sal = load_csv(CSV_FILES["sales"])  # sales
         ue = load_csv(CSV_FILES["ubereats"])  # ubereats
+        
+        # Debug information for UberEats as requested by user
+        st.info(f"🔍 DEBUG: UberEats file path: {CSV_FILES['ubereats']}")
+        st.info(f"🔍 DEBUG: UberEats file exists: {CSV_FILES['ubereats'].exists()}")
+        st.info(f"🔍 DEBUG: UberEats DataFrame loaded - Shape: {ue.shape}")
+        st.info(f"🔍 DEBUG: UberEats DataFrame columns: {list(ue.columns) if not ue.empty else 'Empty DataFrame'}")
+        if not ue.empty:
+            st.info(f"🔍 DEBUG: UberEats first few rows: {ue.head(3).to_dict()}")
+    
+    # Apply date filtering based on user requirements
+    # 1. Remove July 29 from payout date
+    # 2. Filter all data to end on August 10, 2025 (remove August 11 and beyond)
+    
+    # Filter payouts to exclude July 29, 2025
+    if not pay.empty and "Payout Date" in pay.columns:
+        pay = parse_datetime_column(pay, "Payout Date")
+        july_29_filter = pay["Payout Date"].dt.date != pd.to_datetime("2025-07-29").date()
+        pay = pay[july_29_filter]
+    
+    # Filter all datasets to end on August 10, 2025
+    august_10_end = pd.to_datetime("2025-08-10")
+    
+    if not mk.empty and "Date" in mk.columns:
+        mk = parse_datetime_column(mk, "Date")
+        mk = filter_df_by_date(mk, "Date", None, august_10_end)
+    
+    if not ops.empty and "Start Date" in ops.columns:
+        ops = parse_datetime_column(ops, "Start Date")
+        ops = filter_df_by_date(ops, "Start Date", None, august_10_end)
+    
+    if not pay.empty and "Payout Date" in pay.columns:
+        pay = filter_df_by_date(pay, "Payout Date", None, august_10_end)
+    
+    if not sal.empty and "Start Date" in sal.columns:
+        sal = parse_datetime_column(sal, "Start Date")
+        sal = filter_df_by_date(sal, "Start Date", None, august_10_end)
+    
+    if not ue.empty and "Payout Date" in ue.columns:
+        st.info(f"🔍 DEBUG: Before date filtering - UberEats shape: {ue.shape}")
+        ue = parse_datetime_column(ue, "Payout Date")
+        st.info(f"🔍 DEBUG: After datetime parsing - UberEats shape: {ue.shape}")
+        ue = filter_df_by_date(ue, "Payout Date", None, august_10_end)
+        st.info(f"🔍 DEBUG: After date filtering - UberEats shape: {ue.shape}")
+    else:
+        st.info(f"🔍 DEBUG: UberEats DataFrame empty or missing 'Payout Date' column")
+        st.info(f"🔍 DEBUG: UberEats columns available: {list(ue.columns) if not ue.empty else 'Empty DataFrame'}")
     
     # Success message with animation
     if st_lottie:
