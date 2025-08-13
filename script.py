@@ -144,7 +144,11 @@ def load_csv(path: Path) -> pd.DataFrame:
 def parse_datetime_column(df: pd.DataFrame, col_name: str) -> pd.DataFrame:
     if col_name in df.columns:
         df = df.copy()
-        df[col_name] = pd.to_datetime(df[col_name], errors="coerce")
+        # Try to parse with specific format first, then fallback to auto-detection
+        try:
+            df[col_name] = pd.to_datetime(df[col_name], format='%m/%d/%y', errors="coerce")
+        except:
+            df[col_name] = pd.to_datetime(df[col_name], errors="coerce")
     return df
 
 
@@ -1440,7 +1444,7 @@ def section_ubereats(ubereats_df: pd.DataFrame):
         colored_header(
             label="🚗 UberEats Analytics",
             description="Sales and payout analysis for UberEats operations",
-            color_name="purple-70"
+            color_name="blue-70"
         )
     else:
         st.markdown("## 🚗 UberEats Analytics")
@@ -1476,7 +1480,7 @@ def section_ubereats(ubereats_df: pd.DataFrame):
         total_sales = ubereats_df.get("Sales (incl. tax)", pd.Series(dtype=float)).sum()
         st.metric("Total Sales", f"${total_sales:,.0f}")
     with kpi_cols[2]:
-        total_payout = ubereats_df.get("Total payout", pd.Series(dtype=float)).sum()
+        total_payout = ubereats_df.get("Total payout ", pd.Series(dtype=float)).sum()
         st.metric("Total Payout", f"${total_payout:,.0f}")
     with kpi_cols[3]:
         avg_aov = ubereats_df.get("Average Order Value", pd.Series(dtype=float)).mean()
@@ -1555,7 +1559,7 @@ def section_ubereats(ubereats_df: pd.DataFrame):
                     st.metric("Total Sales", f"${store_sales:,.0f}")
                 
                 with store_kpi_cols[2]:
-                    store_payout = store_data.get("Total payout", pd.Series(dtype=float)).sum()
+                    store_payout = store_data.get("Total payout ", pd.Series(dtype=float)).sum()
                     st.metric("Total Payout", f"${store_payout:,.0f}")
                 
                 with store_kpi_cols[3]:
@@ -1588,7 +1592,7 @@ def section_ubereats(ubereats_df: pd.DataFrame):
                     store_data = store_data.sort_values("Payout Date")
                     
                     # Time series metrics
-                    time_series_cols = [c for c in ["Order Count", "Sales (incl. tax)", "Total payout", "Average Order Value"] 
+                    time_series_cols = [c for c in ["Order Count", "Sales (incl. tax)", "Total payout ", "Average Order Value"] 
                                       if c in store_data.columns]
                     
                     if time_series_cols:
@@ -1606,7 +1610,7 @@ def section_ubereats(ubereats_df: pd.DataFrame):
                 all_stores_summary = ubereats_df.groupby("Store Name").agg({
                     "Order Count": "sum",
                     "Sales (incl. tax)": "sum",
-                    "Total payout": "sum",
+                    "Total payout ": "sum",
                     "Average Order Value": "mean"
                 }).reset_index()
                 
@@ -1665,7 +1669,7 @@ def section_ubereats(ubereats_df: pd.DataFrame):
                 store_summary = ubereats_df.groupby("Store Name").agg({
                     "Order Count": "sum",
                     "Sales (incl. tax)": "sum",
-                    "Total payout": "sum",
+                    "Total payout ": "sum",
                     "Average Order Value": "mean"
                 }).reset_index()
                 
@@ -1674,7 +1678,7 @@ def section_ubereats(ubereats_df: pd.DataFrame):
                 # Store performance heatmap
                 if px is not None:
                     store_metrics = store_summary.set_index("Store Name")[["Order Count", "Sales (incl. tax)", 
-                                                                        "Total payout", "Average Order Value"]]
+                                                                        "Total payout ", "Average Order Value"]]
                     fig_heatmap = px.imshow(store_metrics.T, 
                                           title="Store UberEats Performance Heatmap",
                                           color_continuous_scale="viridis",
@@ -1691,7 +1695,7 @@ def section_ubereats(ubereats_df: pd.DataFrame):
         daily_data = ubereats_df.groupby("Payout Date").agg({
             "Order Count": "sum",
             "Sales (incl. tax)": "sum",
-            "Total payout": "sum"
+            "Total payout ": "sum"
         }).reset_index()
         
         # Orders over time
@@ -1705,7 +1709,7 @@ def section_ubereats(ubereats_df: pd.DataFrame):
         st.plotly_chart(fig_sales, use_container_width=True)
         
         # Payouts over time
-        fig_payouts = px.line(daily_data, x="Payout Date", y="Total payout", 
+        fig_payouts = px.line(daily_data, x="Payout Date", y="Total payout ", 
                             title="Total Payouts Over Time", markers=True)
         st.plotly_chart(fig_payouts, use_container_width=True)
 
@@ -2414,7 +2418,7 @@ def section_overview(marketing_df: pd.DataFrame, ops_df: pd.DataFrame, sales_df:
     st.markdown("*Detailed analysis of each dataset's characteristics*")
     file_data = []
     
-    for name, df in [("Marketing", marketing_df), ("Operations", ops_df), ("Sales", sales_df), ("Payouts", payout_df), ("UberEats", ue)]:
+    for name, df in [("Marketing", marketing_df), ("Operations", ops_df), ("Sales", sales_df), ("Payouts", payout_df), ("UberEats", ubereats_df)]:
         # Find date column for each file
         date_col = None
         if name == "Marketing" and "Date" in df.columns:
@@ -2448,7 +2452,7 @@ def section_overview(marketing_df: pd.DataFrame, ops_df: pd.DataFrame, sales_df:
     # Detailed column analysis by file
     st.markdown("### Important Columns by File")
     
-    for name, df in [("Marketing", marketing_df), ("Operations", ops_df), ("Sales", sales_df), ("Payouts", payout_df), ("UberEats", ue)]:
+    for name, df in [("Marketing", marketing_df), ("Operations", ops_df), ("Sales", sales_df), ("Payouts", payout_df), ("UberEats", ubereats_df)]:
         if not df.empty:
             st.markdown(f"**{name} File:**")
             
@@ -2713,7 +2717,10 @@ def main():
         if "Start Date" in sal.columns:
             date_candidates.append((pd.to_datetime(sal["Start Date"], errors="coerce"), "Start Date"))
         if "Payout Date" in ue.columns:
-            date_candidates.append((pd.to_datetime(ue["Payout Date"], errors="coerce"), "Payout Date"))
+            try:
+                date_candidates.append((pd.to_datetime(ue["Payout Date"], format='%m/%d/%y', errors="coerce"), "Payout Date"))
+            except:
+                date_candidates.append((pd.to_datetime(ue["Payout Date"], errors="coerce"), "Payout Date"))
 
         all_dates = pd.concat([s for s, _ in date_candidates], axis=0) if date_candidates else pd.Series([], dtype="datetime64[ns]")
         min_date = pd.to_datetime(all_dates.min()) if not all_dates.empty else None
