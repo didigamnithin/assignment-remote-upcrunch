@@ -975,6 +975,11 @@ def section_payouts(payout_df: pd.DataFrame):
 
     payout_df = parse_datetime_column(payout_df, "Payout Date")
     
+    # Define column mappings for payouts
+    net_payout_col = find_column_by_keywords(payout_df, ["net payout"]) or "Net Payout"
+    commission_col = find_column_by_keywords(payout_df, ["commission"]) or "Commission"
+    mk_fee_col = find_column_by_keywords(payout_df, ["marketing fees"]) or "Marketing Fees | (Including any applicable taxes)"
+    
     # Show filtering information
     st.info(f"📊 Payouts Data Summary: {len(payout_df)} rows loaded")
     if "Payout Date" in payout_df.columns:
@@ -1027,26 +1032,27 @@ def section_payouts(payout_df: pd.DataFrame):
             # Store-specific KPIs
             store_kpi_cols = st.columns(4)
             with store_kpi_cols[0]:
-                store_net_payout = data[net_payout_col].sum()
+                store_net_payout = data[net_payout_col].sum() if net_payout_col in data.columns else 0
                 st.metric("Store Net Payout", f"${store_net_payout:,.0f}")
             with store_kpi_cols[1]:
-                store_avg_payout = data[net_payout_col].mean()
+                store_avg_payout = data[net_payout_col].mean() if net_payout_col in data.columns else 0
                 st.metric("Avg Payout/Period", f"${store_avg_payout:,.0f}")
             with store_kpi_cols[2]:
-                store_commission = data[commission_col].sum()
+                store_commission = data[commission_col].sum() if commission_col in data.columns else 0
                 st.metric("Total Commission", f"${store_commission:,.0f}")
             with store_kpi_cols[3]:
-                store_mk_fees = data[mk_fee_col].sum()
+                store_mk_fees = data[mk_fee_col].sum() if mk_fee_col in data.columns else 0
                 st.metric("Total Marketing Fees", f"${store_mk_fees:,.0f}")
             
             # Store payout trends
             if len(data) > 1:
                 st.markdown("**📈 Payout Trends Over Time**")
-                fig_trend = px.line(data, x="Payout Date", y=net_payout_col, 
-                                  title=f"{st.session_state.payouts_selected_store} - Net Payout Trend",
-                                  markers=True)
-                fig_trend.update_layout(xaxis_title="Payout Date", yaxis_title="Net Payout ($)")
-                st.plotly_chart(fig_trend, use_container_width=True)
+                if net_payout_col in data.columns:
+                    fig_trend = px.line(data, x="Payout Date", y=net_payout_col, 
+                                      title=f"{st.session_state.payouts_selected_store} - Net Payout Trend",
+                                      markers=True)
+                    fig_trend.update_layout(xaxis_title="Payout Date", yaxis_title="Net Payout ($)")
+                    st.plotly_chart(fig_trend, use_container_width=True)
                 
                 # Payout components breakdown
                 st.markdown("**💰 Payout Components Breakdown**")
@@ -1065,7 +1071,11 @@ def section_payouts(payout_df: pd.DataFrame):
                 
                 # Comparison with other stores
                 st.markdown("**🔍 Store Comparison**")
-                all_stores_summary = grouped.groupby("Store Name")[net_payout_col].sum().sort_values(ascending=False)
+                if net_payout_col in grouped.columns:
+                    all_stores_summary = grouped.groupby("Store Name")[net_payout_col].sum().sort_values(ascending=False)
+                else:
+                    st.warning(f"Net payout column '{net_payout_col}' not found in data")
+                    return
                 
                 # Only show ranking if a specific store is selected (not "All Stores")
                 if st.session_state.payouts_selected_store != "All Stores":
@@ -1132,11 +1142,6 @@ def section_payouts(payout_df: pd.DataFrame):
 # -------------------------------
 
 def section_ubereats(ubereats_df: pd.DataFrame):
-    # Debug information as requested by user
-    st.info("🔍 DEBUG: UberEats Section - Starting Analysis")
-    st.info(f"🔍 DEBUG: DataFrame received - Shape: {ubereats_df.shape}")
-    st.info(f"🔍 DEBUG: DataFrame columns: {list(ubereats_df.columns)}")
-    st.info(f"🔍 DEBUG: DataFrame info - {ubereats_df.info() if not ubereats_df.empty else 'Empty DataFrame'}")
     
     # Colourful section header
     if colored_header:
@@ -1151,7 +1156,6 @@ def section_ubereats(ubereats_df: pd.DataFrame):
     
     if ubereats_df.empty:
         st.info("📭 UberEats CSV not found or empty.")
-        st.info("🔍 DEBUG: DataFrame is empty - this is why analysis cannot proceed")
         return
 
     # Parse and prepare data
@@ -1254,17 +1258,7 @@ def section_ubereats(ubereats_df: pd.DataFrame):
                     # Sort by date
                     store_data = store_data.sort_values("Payout Date")
                     
-                    # Time series metrics
-                    time_series_cols = [c for c in ["Order Count", "Sales (incl. tax)", "Total payout ", "Average Order Value"] 
-                                      if c in store_data.columns]
-                    
-                    if time_series_cols:
-                        for col in time_series_cols:
-                            fig = px.line(store_data, x="Payout Date", y=col, 
-                                        title=f"{st.session_state.ubereats_selected_store} - {col} Over Time",
-                                        markers=True)
-                            fig.update_layout(xaxis_title="Payout Date", yaxis_title=col)
-                            st.plotly_chart(fig, use_container_width=True)
+
                 
                 # Store comparison with other stores
                 st.markdown("### 🔍 Store Performance Comparison")
@@ -2248,14 +2242,6 @@ def main():
         pay = load_csv(CSV_FILES["payouts"])  # payouts
         sal = load_csv(CSV_FILES["sales"])  # sales
         ue = load_csv(CSV_FILES["ubereats"])  # ubereats
-        
-        # Debug information for UberEats as requested by user
-        st.info(f"🔍 DEBUG: UberEats file path: {CSV_FILES['ubereats']}")
-        st.info(f"🔍 DEBUG: UberEats file exists: {CSV_FILES['ubereats'].exists()}")
-        st.info(f"🔍 DEBUG: UberEats DataFrame loaded - Shape: {ue.shape}")
-        st.info(f"🔍 DEBUG: UberEats DataFrame columns: {list(ue.columns) if not ue.empty else 'Empty DataFrame'}")
-        if not ue.empty:
-            st.info(f"🔍 DEBUG: UberEats first few rows: {ue.head(3).to_dict()}")
     
     # Apply date filtering based on user requirements
     # 1. Remove July 29 from payout date
@@ -2286,14 +2272,7 @@ def main():
         sal = filter_df_by_date(sal, "Start Date", None, august_10_end)
     
     if not ue.empty and "Payout Date" in ue.columns:
-        st.info(f"🔍 DEBUG: Before date filtering - UberEats shape: {ue.shape}")
         ue = parse_datetime_column(ue, "Payout Date")
-        st.info(f"🔍 DEBUG: After datetime parsing - UberEats shape: {ue.shape}")
-        ue = filter_df_by_date(ue, "Payout Date", None, august_10_end)
-        st.info(f"🔍 DEBUG: After date filtering - UberEats shape: {ue.shape}")
-    else:
-        st.info(f"🔍 DEBUG: UberEats DataFrame empty or missing 'Payout Date' column")
-        st.info(f"🔍 DEBUG: UberEats columns available: {list(ue.columns) if not ue.empty else 'Empty DataFrame'}")
     
     # Success message with animation
     if st_lottie:
