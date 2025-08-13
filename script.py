@@ -236,9 +236,18 @@ def section_marketing(marketing_df: pd.DataFrame):
     # Store-Level Analysis Section
     st.markdown("## 🏪 Store-Level Marketing Analysis")
     
-    # Get unique stores from marketing data
+    # Get unique stores from marketing data, sorted by performance (total sales)
     if "Store Name" in marketing_df.columns:
-        stores = sorted(marketing_df["Store Name"].dropna().unique().tolist())
+        # Calculate store performance metrics
+        store_performance = marketing_df.groupby("Store Name").agg({
+            "Sales": "sum",
+            "Orders": "sum",
+            "New Customers Acquired": "sum"
+        }).reset_index()
+        
+        # Sort by total sales (descending)
+        store_performance = store_performance.sort_values("Sales", ascending=False)
+        stores = store_performance["Store Name"].tolist()
         
         # Store selection interface
         st.markdown("**Select Store for Analysis:**")
@@ -496,9 +505,18 @@ def section_operations(ops_df: pd.DataFrame):
     # Store-Level Analysis Section
     st.markdown("## 🏪 Store-Level Operations Analysis")
     
-    # Get unique stores from operations data
+    # Get unique stores from operations data, sorted by performance (delivered orders)
     if "Store Name" in ops_df.columns:
-        stores = sorted(ops_df["Store Name"].dropna().unique().tolist())
+        # Calculate store performance metrics
+        store_performance = ops_df.groupby("Store Name").agg({
+            "Total Delivered or Picked Up Orders": "sum",
+            "Total Orders Including Cancelled Orders": "sum",
+            "Average Rating": "mean"
+        }).reset_index()
+        
+        # Sort by total delivered orders (descending)
+        store_performance = store_performance.sort_values("Total Delivered or Picked Up Orders", ascending=False)
+        stores = store_performance["Store Name"].tolist()
         
         # Store selection interface
         st.markdown("**Select Store for Analysis:**")
@@ -744,9 +762,18 @@ def section_sales(sales_df: pd.DataFrame):
     # Store-Level Analysis Section
     st.markdown("## 🏪 Store-Level Sales Analysis")
     
-    # Get unique stores from sales data
+    # Get unique stores from sales data, sorted by performance (total sales)
     if "Store Name" in sales_df.columns:
-        stores = sorted(sales_df["Store Name"].dropna().unique().tolist())
+        # Calculate store performance metrics
+        store_performance = sales_df.groupby("Store Name").agg({
+            "Subtotal": "sum",
+            "Total Orders": "sum",
+            "Average Order Value": "mean"
+        }).reset_index()
+        
+        # Sort by total subtotal (descending)
+        store_performance = store_performance.sort_values("Subtotal", ascending=False)
+        stores = store_performance["Store Name"].tolist()
         
         # Store selection interface
         st.markdown("**Select Store for Analysis:**")
@@ -1004,7 +1031,9 @@ def section_payouts(payout_df: pd.DataFrame):
         ]
         grouped = payout_df.groupby(["Store Name", "Payout Date"])[metrics].sum().reset_index()
 
-        stores = sorted(grouped["Store Name"].unique().tolist())
+        # Sort stores by performance (net payout)
+        store_performance = grouped.groupby("Store Name")[net_payout_col].sum().sort_values(ascending=False)
+        stores = store_performance.index.tolist()
         
         # Create store selection with buttons
         st.markdown("**Select Store for Analysis:**")
@@ -1185,9 +1214,18 @@ def section_ubereats(ubereats_df: pd.DataFrame):
     # Store-Level Analysis Section
     st.markdown("## 🏪 Store-Level UberEats Analysis")
     
-    # Get unique stores from UberEats data
+    # Get unique stores from UberEats data, sorted by performance (total sales)
     if "Store Name" in ubereats_df.columns:
-        stores = sorted(ubereats_df["Store Name"].dropna().unique().tolist())
+        # Calculate store performance metrics
+        store_performance = ubereats_df.groupby("Store Name").agg({
+            "Sales (incl. tax)": "sum",
+            "Order Count": "sum",
+            "Total payout ": "sum"
+        }).reset_index()
+        
+        # Sort by total sales (descending)
+        store_performance = store_performance.sort_values("Sales (incl. tax)", ascending=False)
+        stores = store_performance["Store Name"].tolist()
         
         # Store selection interface
         st.markdown("**Select Store for Analysis:**")
