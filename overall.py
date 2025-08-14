@@ -128,14 +128,20 @@ def create_blended_metrics_chart(all_dataframes, period1_start, period1_end, per
         "financial_performance": {
             "metrics": [
                 "Net Payout", "Total payout ",
-                "Total Promotion Fees | (for historical reference only)", "Total Ad Fees | (for historical reference only)",
+                "Total Promotion Fees | (for historical reference only)",
                 "Marketing Fees (for historical reference only) | (All discounts and fees)",
                 "Marketing Spend", "Customer Acquisition Cost",
-                "ROAS", "Return on Ad Spend", "Conversion Rate", "Average Rating",
-                "Average AHT"
+                "Return on Ad Spend", "Conversion Rate", "Average AHT"
             ],
             "sources": ["marketing", "sales", "payouts", "ubereats", "operations"],
             "date_columns": ["Date", "Start Date", "Payout Date", "Payout Date", "Start Date"]
+        },
+        "key_metrics": {
+            "metrics": [
+                "ROAS", "New Customers Acquired", "New DP Customers Acquired", "Average Rating"
+            ],
+            "sources": ["marketing", "operations"],
+            "date_columns": ["Date", "Start Date"]
         },
         "customers": {
             "metrics": [
@@ -202,7 +208,7 @@ def create_blended_metrics_chart(all_dataframes, period1_start, period1_end, per
         name="Pre TODC (Jun 6 - Jul 6)",
         x=metrics_df["Metric"],
         y=metrics_df["Pre TODC"],
-        marker_color='#3498db',
+        marker_color='#e74c3c',
         text=metrics_df["Pre TODC"].round(2),
         textposition='auto'
     ))
@@ -211,7 +217,7 @@ def create_blended_metrics_chart(all_dataframes, period1_start, period1_end, per
         name="Post TODC (Jul 7 - Aug 6)",
         x=metrics_df["Metric"],
         y=metrics_df["Post TODC"],
-        marker_color='#e74c3c',
+        marker_color='#27ae60',
         text=metrics_df["Post TODC"].round(2),
         textposition='auto'
     ))
@@ -221,6 +227,7 @@ def create_blended_metrics_chart(all_dataframes, period1_start, period1_end, per
         "orders": "📦 Orders & Delivery Metrics",
         "sales": "💰 Sales & Revenue Metrics", 
         "financial_performance": "💸 Financial & Performance Metrics",
+        "key_metrics": "🎯 Key Performance Indicators",
         "customers": "👥 Customer Acquisition Metrics",
         "quality": "⭐ Quality & Error Metrics"
     }
@@ -299,7 +306,7 @@ def create_campaign_comparison_chart(df, date_column, value_columns, period_star
             name="Internal Campaigns",
             x=comparison_df["Metric"],
             y=comparison_df["Internal Campaigns"],
-            marker_color='#3498db',
+            marker_color='#e74c3c',
             text=comparison_df["Internal Campaigns"].round(2),
             textposition='auto'
         ))
@@ -308,7 +315,7 @@ def create_campaign_comparison_chart(df, date_column, value_columns, period_star
             name="TODC Campaigns",
             x=comparison_df["Metric"],
             y=comparison_df["TODC Campaigns"],
-            marker_color='#e74c3c',
+            marker_color='#27ae60',
             text=comparison_df["TODC Campaigns"].round(2),
             textposition='auto'
         ))
@@ -355,7 +362,7 @@ def main():
     """, unsafe_allow_html=True)
     
     # Create blended metrics charts for each group
-    metric_groups = ["orders", "sales", "financial_performance", "customers", "quality"]
+    metric_groups = ["orders", "sales", "financial_performance", "key_metrics", "customers", "quality"]
     
     for group in metric_groups:
         fig, comparison_df = create_blended_metrics_chart(
@@ -370,6 +377,7 @@ def main():
                 "orders": "Orders & Delivery",
                 "sales": "Sales & Revenue", 
                 "financial_performance": "Financial & Performance",
+                "key_metrics": "Key Performance Indicators",
                 "customers": "Customer Acquisition",
                 "quality": "Quality & Error"
             }
